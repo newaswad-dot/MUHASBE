@@ -82,8 +82,10 @@
     .bulk-note{color:var(--muted);padding:12px 0;}
     .bulk-config{display:flex;flex-direction:column;gap:8px;padding:12px 0;}
     .bulk-target-row{display:flex;gap:8px;align-items:center;}
-    .bulk-inline{display:flex;gap:8px;flex-wrap:wrap;}
+    .bulk-inline{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
     .bulk-inline input{flex:1 1 200px;}
+    .bulk-new-inline{flex-wrap:nowrap;align-items:center;}
+    .bulk-new-inline input{flex:1 1 auto;min-width:0;}
     .bulk-external{display:flex;flex-direction:column;gap:8px;padding:12px 0;}
     .bulk-colors{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;}
     .bulk-actions-row{display:flex;flex-wrap:wrap;gap:8px;padding:12px 0;}
@@ -147,6 +149,9 @@
       .create-row{flex-direction:column;}
       .bulk-target-row{flex-direction:column;align-items:stretch;}
       .bulk-inline{flex-direction:column;}
+      .bulk-new-inline{flex-direction:row;flex-wrap:nowrap;}
+      .bulk-new-inline input{max-width:65vw;}
+      .bulk-new-inline button{width:auto;flex:0 0 auto;}
       .bulk-actions-row button{flex:1;}
       #quickTools{top:16px;}
     }
@@ -180,6 +185,7 @@
         <button id="menuHome" class="menu-btn" type="button">الصفحة الرئيسية</button>
         <button id="menuBulk" class="menu-btn" type="button">أداة البحث الجماعي</button>
         <button id="refreshSheetsBtn" class="menu-btn" type="button">تحديث قائمة الأوراق</button>
+        <button id="togglePersonCardBtn" class="menu-btn" type="button">إيقاف بيانات صاحب الـID</button>
       </div>
       <div class="menu-section">
         <select id="menuSection"></select>
@@ -295,7 +301,7 @@
           <div class="bulk-target-row">
             <select id="bulkTargetSheet" style="flex:1"></select>
           </div>
-          <div class="bulk-inline">
+          <div class="bulk-inline bulk-new-inline">
             <input id="bulkNewSheet" type="text" placeholder="اسم ورقة جديدة (داخل الإدارة)">
             <button id="bulkCreateSheet" class="btn-ghost">إنشاء ورقة</button>
           </div>
@@ -320,7 +326,6 @@
         <div class="bulk-actions-row">
           <button id="bulkPasteBtn" class="btn-blue">لصق ثم بحث</button>
           <button id="bulkExecuteBtn" class="btn-red" disabled>تنفيذ الكل</button>
-          <button id="bulkResetBtn" class="btn-ghost">إعادة تعيين</button>
           <button id="bulkCopyAllBtn" class="btn-ghost" disabled>نسخ الكل</button>
           <button id="bulkCopySalaryBtn" class="btn-ghost" disabled>نسخ الراتب فقط</button>
         </div>
@@ -440,7 +445,6 @@
     const bulkExecuteBtn     = document.getElementById('bulkExecuteBtn');
     const bulkCopyAllBtn     = document.getElementById('bulkCopyAllBtn');
     const bulkCopySalaryBtn  = document.getElementById('bulkCopySalaryBtn');
-    const bulkResetBtn       = document.getElementById('bulkResetBtn');
     const bulkProgressBar    = document.getElementById('bulkProgressBar');
     const bulkProgressLabel  = document.getElementById('bulkProgressLabel');
     const bulkSummaryText    = document.getElementById('bulkSummaryText');
@@ -490,6 +494,7 @@
     const menuReloadBtn   = document.getElementById('menuReload');
     const menuHomeBtn     = document.getElementById('menuHome');
     const menuBulkBtn     = document.getElementById('menuBulk');
+    const personCardToggleBtn = document.getElementById('togglePersonCardBtn');
     const menuSectionSelect = document.getElementById('menuSection');
     const menuSectionStatus = document.getElementById('menuSectionStatus');
     if (menuSectionStatus) {
@@ -591,6 +596,11 @@
     let lastResult = null;
     let lastProfileIds = [];
     let lastBaseId = '';
+
+    const PERSON_CARD_STORAGE_KEY = 'personCardEnabled';
+    let personCardEnabledState = readStoredPersonCardState();
+    let personListenersAttached = false;
+    let copyMsgResetTimer = null;
 
     let bulkIds = [];
     let bulkResults = [];
@@ -859,7 +869,6 @@
       if (bulkExecuteBtn) bulkExecuteBtn.disabled = !hasIds || !bulkAnalyzed || bulkBusy;
       if (bulkCopyAllBtn) bulkCopyAllBtn.disabled = !hasCopyableResults;
       if (bulkCopySalaryBtn) bulkCopySalaryBtn.disabled = !hasCopyableResults;
-      if (bulkResetBtn) bulkResetBtn.disabled = bulkBusy || !bulkExecuted;
     }
 
     function renderBulkResults(){
@@ -1313,23 +1322,6 @@
       }
     }
 
-    function resetBulkTool(){
-      if (bulkBusy) return;
-      cancelBulkAutoAnalyze();
-      if (bulkIdsInput) bulkIdsInput.value = '';
-      bulkIds = [];
-      bulkResults = [];
-      bulkAnalyzed = false;
-      bulkExecuted = false;
-      bulkPage = 1;
-      renderBulkResults();
-      updateBulkCounters();
-      updateBulkButtons();
-      updateBulkProgress(0, 1, '');
-      if (bulkEmptyState) bulkEmptyState.style.display = '';
-      if (bulkStatusText) bulkStatusText.textContent = 'تمت إعادة التعيين.';
-    }
-
     async function handleBulkPaste(){
       try {
         const txt = await navigator.clipboard.readText();
@@ -1347,34 +1339,172 @@
     }
 
     /******** قسم البيانات (إخفاء/تعطيل) ********/
-    function isPersonFeatureDisabled(){ return localStorage.getItem('disable_person_feature') === '1'; }
-    function isPersonHidden(){ return localStorage.getItem('hide_person_section') === '1'; }
+    function readStoredPersonCardState(){
+      try {
+        const stored = localStorage.getItem(PERSON_CARD_STORAGE_KEY);
+        if (stored === null) {
+          const legacy = localStorage.getItem('disable_person_feature');
+          if (legacy === '1') return false;
+          return true;
+        }
+        return stored !== 'false';
+      } catch (_) {
+        return true;
+      }
+    }
+
+    function isPersonFeatureDisabled(){
+      return !personCardEnabledState;
+    }
+
+    function isPersonHidden(){
+      return localStorage.getItem('hide_person_section') === '1';
+    }
+
+    function resetCopyMsgLabel(){
+      if (copyMsgBtn) {
+        copyMsgBtn.textContent = 'نسخ الرسالة';
+      }
+      if (copyMsgResetTimer){
+        clearTimeout(copyMsgResetTimer);
+        copyMsgResetTimer = null;
+      }
+    }
+
+    function cancelPersonCardOperations(){
+      lastProfileIds = [];
+      personMsg.value = '';
+      personNote.textContent = '—';
+      resetCopyMsgLabel();
+    }
+
+    function updatePersonToggleUI(){
+      if (personCardToggleBtn){
+        personCardToggleBtn.textContent = personCardEnabledState ? 'إيقاف بيانات صاحب الـID' : 'تفعيل بيانات صاحب الـID';
+      }
+      if (qtDisablePerson){
+        qtDisablePerson.checked = !personCardEnabledState;
+      }
+    }
+
+    function attachPersonCardListeners(){
+      if (personListenersAttached) return;
+      if (copyMsgBtn) copyMsgBtn.addEventListener('click', handleCopyMsgClick);
+      if (colorAllBtn) colorAllBtn.addEventListener('click', handleColorAllClick);
+      personListenersAttached = true;
+    }
+
+    function detachPersonCardListeners(){
+      if (!personListenersAttached) return;
+      if (copyMsgBtn) copyMsgBtn.removeEventListener('click', handleCopyMsgClick);
+      if (colorAllBtn) colorAllBtn.removeEventListener('click', handleColorAllClick);
+      personListenersAttached = false;
+    }
 
     function applyPersonVisibility(){
-      qtDisablePerson.checked = isPersonFeatureDisabled();
+      updatePersonToggleUI();
       const hidden = isPersonHidden() || isPersonFeatureDisabled();
-      personCardEl.style.display = hidden ? 'none' : '';
+      if (personCardEl) personCardEl.style.display = hidden ? 'none' : '';
       if (isPersonFeatureDisabled()){
-        personMsg.value = '';
-        personNote.textContent = '—';
-        copyMsgBtn.disabled = true;
-        colorAllBtn.disabled = true;
+        detachPersonCardListeners();
+        cancelPersonCardOperations();
+        if (copyMsgBtn) copyMsgBtn.disabled = true;
+        if (colorAllBtn) colorAllBtn.disabled = true;
       } else {
-        copyMsgBtn.disabled = false;
-        colorAllBtn.disabled = false;
+        attachPersonCardListeners();
+        if (copyMsgBtn) copyMsgBtn.disabled = false;
+        if (colorAllBtn) colorAllBtn.disabled = false;
       }
-      qtHidePerson.textContent = hidden ? '👀 إظهار قسم البيانات' : '🙈 إخفاء قسم البيانات';
+      if (qtHidePerson){
+        qtHidePerson.textContent = hidden ? '👀 إظهار قسم البيانات' : '🙈 إخفاء قسم البيانات';
+      }
     }
-    qtHidePerson.addEventListener('click', ()=>{
-      const cur = isPersonHidden();
-      localStorage.setItem('hide_person_section', cur ? '0':'1');
+
+    function setPersonCardEnabled(enabled){
+      const next = !!enabled;
+      if (next === personCardEnabledState) return;
+      personCardEnabledState = next;
+      try { localStorage.setItem(PERSON_CARD_STORAGE_KEY, next ? 'true' : 'false'); } catch (_) {}
+      updatePersonToggleUI();
       applyPersonVisibility();
-    });
-    qtDisablePerson.addEventListener('change', ()=>{
-      const en = !!qtDisablePerson.checked;
-      localStorage.setItem('disable_person_feature', en ? '1':'0');
-      applyPersonVisibility();
-    });
+      if (personCardEnabledState && lastBaseId){
+        renderPersonCard(lastBaseId);
+      }
+    }
+
+    async function handleCopyMsgClick(){
+      if (isPersonFeatureDisabled()) return;
+      const text = personMsg.value || '';
+      try {
+        await navigator.clipboard.writeText(text);
+        if (copyMsgBtn) {
+          copyMsgBtn.textContent = '✓ نُسخت';
+          copyMsgResetTimer = setTimeout(resetCopyMsgLabel, 900);
+        }
+      } catch (_) {
+        if (!personMsg) return;
+        personMsg.select();
+        document.execCommand('copy');
+        if (copyMsgBtn) {
+          copyMsgBtn.textContent = '✓ نُسخت';
+          copyMsgResetTimer = setTimeout(resetCopyMsgLabel, 900);
+        }
+      }
+    }
+
+    function handleColorAllClick(){
+      if (isPersonFeatureDisabled()) { if (personNote) personNote.textContent='الميزة معطّلة.'; return; }
+      if (!lastProfileIds.length){ if (personNote) personNote.textContent='لا IDs لتلوينها.'; return; }
+      const sheet = sheetSelect.value;
+      const targetMode = targetModeSel.value;
+      if (targetMode==='both' && !sheet){ advNote.textContent='اختر ورقة الهدف أولاً.'; return; }
+
+      if (personNote) personNote.textContent = 'جارٍ التلوين...';
+      let done=0, fail=0;
+      const runOne = (uid)=> new Promise((resolve)=>{
+        google.script.run
+          .withSuccessHandler(_=>{ done++; resolve(true); })
+          .withFailureHandler(_=>{ fail++; resolve(false); })
+          .applyAdvancedAction(uid, sheet, adminColor.value, withdrawColor.value, targetMode);
+      });
+      Promise.all(lastProfileIds.map(runOne)).then(()=>{
+        if (isPersonFeatureDisabled()) { cancelPersonCardOperations(); return; }
+        if(personNote) personNote.textContent = `تم — ملوّن: ${done}, فشل: ${fail}`;
+        flash(personCardEl,'flash-green');
+        if(localMap){
+          lastProfileIds.forEach(uid=>{
+            if(!localMap[uid]) return;
+            localMap[uid].aCol = true;
+            if (targetMode==='both') localMap[uid].dCol = true;
+          });
+        }
+        markJustColored(lastProfileIds, targetMode);
+        refreshCountsLive();
+      });
+    }
+
+    if (qtHidePerson){
+      qtHidePerson.addEventListener('click', ()=>{
+        const cur = isPersonHidden();
+        localStorage.setItem('hide_person_section', cur ? '0':'1');
+        applyPersonVisibility();
+      });
+    }
+
+    if (qtDisablePerson){
+      qtDisablePerson.addEventListener('change', ()=>{
+        const enable = !qtDisablePerson.checked;
+        setPersonCardEnabled(enable);
+      });
+    }
+
+    if (personCardToggleBtn){
+      personCardToggleBtn.addEventListener('click', ()=>{
+        setPersonCardEnabled(!personCardEnabledState);
+      });
+    }
+
+    applyPersonVisibility();
 
     /******** أدوات مساعدة UI ********/
     function flash(el, cls){
@@ -1505,7 +1635,6 @@
     if (bulkExecuteBtn) bulkExecuteBtn.addEventListener('click', runBulkExecute);
     if (bulkCopyAllBtn) bulkCopyAllBtn.addEventListener('click', () => copyBulk('all'));
     if (bulkCopySalaryBtn) bulkCopySalaryBtn.addEventListener('click', () => copyBulk('salary'));
-    if (bulkResetBtn) bulkResetBtn.addEventListener('click', resetBulkTool);
     if (bulkPrevBtn) bulkPrevBtn.addEventListener('click', () => {
       if (bulkPage > 1) {
         bulkPage--;
@@ -1748,6 +1877,7 @@
       lastProfileIds = [];
       google.script.run
         .withSuccessHandler(card=>{
+          if (isPersonFeatureDisabled()) { cancelPersonCardOperations(); return; }
           if(!card || !card.ok){
             personNote.textContent = card?.message || 'لم يتم العثور على بيانات.';
             personMsg.value = '';
@@ -1775,6 +1905,7 @@
           }
         })
         .withFailureHandler(err=>{
+          if (isPersonFeatureDisabled()) { cancelPersonCardOperations(); return; }
           personNote.textContent = 'خطأ: ' + (err?.message||'');
           personMsg.value = '';
         })
@@ -1786,6 +1917,7 @@
       if (lastBaseId){
         google.script.run
           .withSuccessHandler(card=>{
+            if (isPersonFeatureDisabled()) { cancelPersonCardOperations(); return; }
             if(card && card.ok){
               personMsg.value = buildMessageText(card, !!applyDiscountToMessage.checked, localMap);
               personNote.textContent = `تم — عدد IDs: ${(card.ids||[]).length}`;
@@ -1794,46 +1926,6 @@
           .getPersonCardById(lastBaseId);
       }
     }
-
-    copyMsgBtn.addEventListener('click', async ()=>{
-      try{
-        await navigator.clipboard.writeText(personMsg.value||'');
-        copyMsgBtn.textContent = '✓ نُسخت';
-        setTimeout(()=> copyMsgBtn.textContent='نسخ الرسالة', 900);
-      }catch(_){
-        personMsg.select(); document.execCommand('copy');
-      }
-    });
-
-    colorAllBtn.addEventListener('click', ()=>{
-      if (isPersonFeatureDisabled()) { personNote.textContent='الميزة معطّلة.'; return; }
-      if (!lastProfileIds.length){ personNote.textContent='لا IDs لتلوينها.'; return; }
-      const sheet = sheetSelect.value;
-      const targetMode = targetModeSel.value;
-      if (targetMode==='both' && !sheet){ advNote.textContent='اختر ورقة الهدف أولاً.'; return; }
-
-      personNote.textContent = 'جارٍ التلوين...';
-      let done=0, fail=0;
-      const runOne = (uid)=> new Promise((resolve)=>{
-        google.script.run
-          .withSuccessHandler(_=>{ done++; resolve(true); })
-          .withFailureHandler(_=>{ fail++; resolve(false); })
-          .applyAdvancedAction(uid, sheet, adminColor.value, withdrawColor.value, targetMode);
-      });
-      Promise.all(lastProfileIds.map(runOne)).then(()=>{
-        personNote.textContent = `تم — ملوّن: ${done}, فشل: ${fail}`;
-        flash(personCardEl,'flash-green');
-        if(localMap){
-          lastProfileIds.forEach(uid=>{
-            if(!localMap[uid]) return;
-            localMap[uid].aCol = true;
-            if (targetMode==='both') localMap[uid].dCol = true;
-          });
-        }
-        markJustColored(lastProfileIds, targetMode);
-        refreshCountsLive();
-      });
-    });
 
     /******** تنفيذ ذكي ********/
     function runAdvanced() {
@@ -2028,7 +2120,11 @@
           return;
         }
         renderResult(res);
-        renderPersonCard(id);
+        if (isPersonFeatureDisabled()) {
+          cancelPersonCardOperations();
+        } else {
+          renderPersonCard(id);
+        }
       })
       .withFailureHandler(err=>{
         if (err && err.message) renderResult({ status:'error', message: err.message });
@@ -2064,7 +2160,7 @@
         debounceTimer = setTimeout(()=>{
           if (lastResult) renderResult(lastResult);
           refreshCountsLive(pct);
-          if (applyDiscountToMessage?.checked && lastBaseId) rebuildPersonCardUsingLast();
+          if (!isPersonFeatureDisabled() && applyDiscountToMessage?.checked && lastBaseId) rebuildPersonCardUsingLast();
         }, 120);
       });
     })();
@@ -2102,7 +2198,7 @@
           .withSuccessHandler(res=>{
             if (!res || typeof res.enabled === 'undefined') return;
             if (!!res.enabled !== desired) enableSalaryCorrection.checked = !!res.enabled;
-            if (lastBaseId) rebuildPersonCardUsingLast();
+            if (!isPersonFeatureDisabled() && lastBaseId) rebuildPersonCardUsingLast();
           })
           .withFailureHandler(()=>{ enableSalaryCorrection.checked = !desired; })
           .setSalaryCorrectionEnabled(desired ? 1 : 0);

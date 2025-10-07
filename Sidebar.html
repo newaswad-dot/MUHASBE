@@ -87,6 +87,10 @@
     .bulk-new-inline{flex-wrap:nowrap;align-items:center;}
     .bulk-new-inline input{flex:1 1 auto;min-width:0;}
     .bulk-external{display:flex;flex-direction:column;gap:8px;padding:12px 0;}
+    .bulk-external-row{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;}
+    .bulk-external-row select,.bulk-external-row input{flex:1;min-width:0;}
+    .bulk-external-row button{flex:0 0 auto;white-space:nowrap;}
+    .bulk-external-row > *{min-height:46px;}
     .bulk-colors{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;}
     .bulk-actions-row{display:flex;flex-wrap:wrap;gap:8px;padding:12px 0;}
     .bulk-actions-row button{flex:1 1 160px;}
@@ -152,6 +156,7 @@
       .bulk-new-inline{flex-direction:row;flex-wrap:nowrap;}
       .bulk-new-inline input{max-width:65vw;}
       .bulk-new-inline button{width:auto;flex:0 0 auto;}
+      #bulkExternalWrap .bulk-external-row input{max-width:68vw;}
       .bulk-actions-row button{flex:1;}
       #quickTools{top:16px;}
     }
@@ -307,11 +312,11 @@
           </div>
           <div id="bulkExternalWrap" class="bulk-external" style="display:none;">
             <div id="bulkExternalFileLabel" class="muted"></div>
-            <div class="bulk-target-row">
-              <select id="bulkExternalTargetSheet" style="flex:1"></select>
+            <div class="bulk-external-row">
+              <select id="bulkExternalTargetSheet"></select>
               <button id="bulkExternalRefreshSheets" class="btn-ghost" title="تحديث قائمة الأوراق الخارجية">↻</button>
             </div>
-            <div class="bulk-inline">
+            <div class="bulk-external-row">
               <input id="bulkExternalNewSheet" type="text" placeholder="اسم ورقة جديدة (خارجية)">
               <button id="bulkExternalCreateSheet" class="btn-ghost">إنشاء</button>
             </div>

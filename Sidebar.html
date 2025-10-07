@@ -1091,22 +1091,22 @@
 
     function applyBulkScopeUI(){
       const scope = bulkScope?.value || 'both';
-      const showLocalCreation = scope !== 'all';
       if (bulkTargetSheet) {
         bulkTargetSheet.style.display = '';
         const parentRow = bulkTargetSheet.closest('.bulk-target-row');
         if (parentRow) parentRow.style.display = '';
       }
       if (bulkNewSheet) {
-        bulkNewSheet.style.display = showLocalCreation ? '' : 'none';
+        bulkNewSheet.style.display = '';
         const newRow = bulkNewSheet.closest('.bulk-inline');
-        if (newRow) newRow.style.display = showLocalCreation ? '' : 'none';
+        if (newRow) newRow.style.display = '';
       }
       if (bulkCreateSheet) {
-        bulkCreateSheet.style.display = showLocalCreation ? '' : 'none';
+        bulkCreateSheet.style.display = '';
       }
       if (bulkRefreshSheets) {
-        bulkRefreshSheets.style.display = showLocalCreation ? '' : 'none';
+        const shouldHideRefresh = scope === 'all';
+        bulkRefreshSheets.style.display = shouldHideRefresh ? 'none' : '';
       }
       const showExternalUI = false; // خيار "الكل" لا يعرض عناصر إضافية
       if (bulkExternalWrap) {

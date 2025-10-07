@@ -1091,19 +1091,22 @@
 
     function applyBulkScopeUI(){
       const scope = bulkScope?.value || 'both';
-      const showLocalRows = scope !== 'all';
+      const showLocalCreation = scope !== 'all';
       if (bulkTargetSheet) {
-        bulkTargetSheet.style.display = showLocalRows ? '' : 'none';
+        bulkTargetSheet.style.display = '';
         const parentRow = bulkTargetSheet.closest('.bulk-target-row');
-        if (parentRow) parentRow.style.display = showLocalRows ? '' : 'none';
+        if (parentRow) parentRow.style.display = '';
       }
       if (bulkNewSheet) {
-        bulkNewSheet.style.display = showLocalRows ? '' : 'none';
+        bulkNewSheet.style.display = showLocalCreation ? '' : 'none';
         const newRow = bulkNewSheet.closest('.bulk-inline');
-        if (newRow) newRow.style.display = showLocalRows ? '' : 'none';
+        if (newRow) newRow.style.display = showLocalCreation ? '' : 'none';
       }
       if (bulkCreateSheet) {
-        bulkCreateSheet.style.display = showLocalRows ? '' : 'none';
+        bulkCreateSheet.style.display = showLocalCreation ? '' : 'none';
+      }
+      if (bulkRefreshSheets) {
+        bulkRefreshSheets.style.display = showLocalCreation ? '' : 'none';
       }
       const showExternalUI = false; // خيار "الكل" لا يعرض عناصر إضافية
       if (bulkExternalWrap) {

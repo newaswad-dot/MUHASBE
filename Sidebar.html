@@ -50,7 +50,7 @@
     .view-tab.active{color:var(--accent);border-color:var(--accent);}
     .view-panel{display:none;flex-direction:column;gap:0;margin:0;padding:0;}
     .view-panel.active{display:flex;}
-    #resultsBox{display:flex;flex-direction:column;gap:12px;padding:12px 0;}
+    #resultsBox{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;width:100%;max-width:460px;margin-inline:auto;padding:12px 0;}
     #resultsBox .badges{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
     .badge{display:inline-flex;align-items:center;justify-content:center;padding:6px 12px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid rgba(255,255,255,0.12);box-shadow:0 0 6px rgba(255,255,255,0.08);}
     .badge--withdraw{color:#4de4a1;}
@@ -61,7 +61,7 @@
     #statusChipsRow{display:flex;flex-wrap:wrap;gap:6px;}
     #nameText{font-size:15px;color:var(--muted);}
     #amountText{font-size:56px;font-weight:900;color:var(--accent);}
-    #discountInfo{font-size:13px;color:var(--muted);min-height:18px;}
+    #discountInfo{font-size:13px;color:var(--muted);min-height:18px;white-space:pre-line;}
     #multiText{font-size:12px;color:var(--muted);}
     #extraDupInfo{font-size:12px;color:var(--muted);}
     .search-flow{display:flex;flex-direction:column;gap:6px;}
@@ -1821,8 +1821,9 @@
 
       if (discountInfo){
         if (pct > 0 && total > 0){
-          const discountAmount = total - discountedTotal;
-          discountInfo.textContent = `قبل الخصم: ${fmt(total)} • خصم ${formatDiscountValue(pct)}%: ${fmt(discountAmount)}`;
+          const beforeText = fmt(total);
+          const afterText  = fmt(discountedTotal);
+          discountInfo.textContent = `قبل النسبة: ${beforeText}\nبعد النسبة: ${afterText}`;
           discountInfo.style.display = '';
         } else {
           discountInfo.textContent = '';

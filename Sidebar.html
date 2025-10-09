@@ -1490,7 +1490,7 @@
         google.script.run
           .withSuccessHandler(_=>{ done++; resolve(true); })
           .withFailureHandler(_=>{ fail++; resolve(false); })
-          .applyAdvancedAction(uid, sheet, adminColor.value, withdrawColor.value, targetMode);
+          .applyAdvancedAction(uid, sheet, adminColor.value, withdrawColor.value, targetMode, undefined, activeSectionKey || '');
       });
       Promise.all(lastProfileIds.map(runOne)).then(()=>{
         if (isPersonFeatureDisabled()) { cancelPersonCardOperations(); return; }
@@ -1618,13 +1618,13 @@
               loadNote.textContent = baseMsg + ' | ⚠️ خطأ بالمحلي: ' + (err?.message||'');
               setLoadBtnState(false);
             })
-            .getSearchSnapshotLight();
+            .getSearchSnapshotLight(activeSectionKey || '');
         })
         .withFailureHandler(err=>{
           loadNote.textContent = '⚠️ خطأ بالتحميل: ' + (err?.message||'');
           setLoadBtnState(false);
         })
-        .loadDataIntoCache();
+        .loadDataIntoCache(activeSectionKey || '');
     }
     reloadBtn.addEventListener('click', loadData);
     createSheetBtn.addEventListener('click', ()=>{
@@ -1935,7 +1935,7 @@
           personNote.textContent = 'خطأ: ' + (err?.message||'');
           personMsg.value = '';
         })
-        .getPersonCardById(id);
+        .getPersonCardById(id, activeSectionKey || '');
     }
 
     function rebuildPersonCardUsingLast(){
@@ -1949,7 +1949,7 @@
               personNote.textContent = `تم — عدد IDs: ${(card.ids||[]).length}`;
             }
           })
-          .getPersonCardById(lastBaseId);
+          .getPersonCardById(lastBaseId, activeSectionKey || '');
       }
     }
 
@@ -1981,7 +1981,7 @@
         .withFailureHandler(err => {
           advNote.textContent = 'خطأ: ' + (err?.message || '');
         })
-        .applyAdvancedAction(id, sheet, adminColor.value, withdrawColor.value, targetMode);
+        .applyAdvancedAction(id, sheet, adminColor.value, withdrawColor.value, targetMode, undefined, activeSectionKey || '');
     }
     advRunBtn.addEventListener('click', runAdvanced);
 
@@ -2013,7 +2013,7 @@
           if (menuQtColored) menuQtColored.textContent = '—';
           if (menuQtUncolored) menuQtUncolored.textContent = '—';
         })
-        .getLiveStatsForFooter(pct);
+        .getLiveStatsForFooter(pct, activeSectionKey || '');
     }
     function applyModeLabel(){
       const isDark = document.body.classList.contains('dark');
@@ -2155,7 +2155,7 @@
       .withFailureHandler(err=>{
         if (err && err.message) renderResult({ status:'error', message: err.message });
       })
-      .searchId(id, pct);
+      .searchId(id, pct, activeSectionKey || '');
   }
 
     function applySingleDiscountChange(pct, source){

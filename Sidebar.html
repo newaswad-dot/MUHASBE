@@ -1801,6 +1801,90 @@
       }
       if (nameText) nameText.textContent = '—';
     }
+    function ensureLocalMapObject(){
+      if (!localMap || typeof localMap !== 'object') {
+        localMap = Object.create(null);
+      }
+      return localMap;
+    }
+    function createEmptyLocalNode(){
+      return { rowsCount: 0, sum: 0, salaries: [], names: [], inAdmin: false, aCol: false, dCol: false };
+    }
+    function toNumericArray(list){
+      if (!Array.isArray(list)) return [];
+      const nums = [];
+      list.forEach(val => {
+        const num = Number(val);
+        if (Number.isFinite(num)) nums.push(num);
+      });
+      return nums;
+    }
+    function deriveRowCountFromResult(result){
+      if (!result) return 0;
+      const salaryNums = toNumericArray(result.salaries);
+      if (salaryNums.length) return salaryNums.length;
+      const rawRows = Number(result.rowsCount);
+      if (Number.isFinite(rawRows) && rawRows > 0) return rawRows;
+      const status = String(result.status || '');
+      if (!status || status === 'غير موجود' || status === 'error') return 0;
+      if (status.includes('راتبين')) return 2;
+      return 1;
+    }
+    function syncLocalEntryFromResult(result, options = {}){
+      const keySource = result ? result.id : options.id;
+      const key = String(keySource || '').trim();
+      if (!key) return null;
+      if (result && (result.status === 'غير موجود' || result.status === 'error')) return null;
+      const allowCreate = options.allowCreateWhenMissing ?? !!result;
+      if (!allowCreate && (!localMap || typeof localMap !== 'object' || !Object.prototype.hasOwnProperty.call(localMap, key))) {
+        return null;
+      }
+      const map = ensureLocalMapObject();
+      let node = map[key];
+      if (!node) {
+        if (!allowCreate) return null;
+        node = createEmptyLocalNode();
+        map[key] = node;
+      }
+      if (result) {
+        const status = String(result.status || '');
+        const salaryNums = toNumericArray(result.salaries);
+        if (salaryNums.length) {
+          node.rowsCount = salaryNums.length;
+          node.sum = salaryNums.reduce((acc, n) => acc + n, 0);
+          node.salaries = salaryNums;
+        } else {
+          const fallback = Number(result.totalSalary ?? result.salaryAfterDiscount ?? result.discountAmount ?? result.sum);
+          if (Number.isFinite(fallback)) {
+            if (!node.rowsCount && fallback > 0) node.rowsCount = Math.max(1, Number(result.rowsCount || 0) || 1);
+            node.sum = fallback;
+            if ((!Array.isArray(node.salaries) || !node.salaries.length) && fallback) node.salaries = [fallback];
+          }
+        }
+        if (Array.isArray(result.names) && result.names.length) {
+          node.names = result.names.map(v => String(v || ''));
+        } else if (result.name) {
+          const nm = String(result.name || '').trim();
+          if (nm) node.names = [nm];
+        }
+        if (typeof result.inAdmin === 'boolean') {
+          node.inAdmin = result.inAdmin;
+        } else if (status.includes('ادارة')) {
+          node.inAdmin = true;
+        }
+        if (result.isDuplicate) {
+          const label = String(result.duplicateLabel || '');
+          if (label === 'مكرر' || label.includes('وكالة')) node.aCol = true;
+          if (label === 'مكرر' || label.includes('ادارة')) node.dCol = true;
+        }
+      } else if (options.fallbackRowsCount && (!node.rowsCount || node.rowsCount < options.fallbackRowsCount)) {
+        node.rowsCount = options.fallbackRowsCount;
+      }
+      if (options.forceInAdmin) node.inAdmin = true;
+      if (options.markAgent) node.aCol = true;
+      if (options.markAdmin) node.dCol = true;
+      return node;
+    }
     function applyBadges(baseStatus, duplicateLabel, hasSalaries){
       let baseClass = 'badge--agent';
       if (baseStatus.includes('ادارة') && !hasSalaries) baseClass = 'badge--admin';
@@ -1886,6 +1970,7 @@
         multiText.textContent = '(' + res.salaries.map(n=>fmt(Number(n)||0)).join(' + ') + ')';
       } else multiText.textContent = '';
 
+      syncLocalEntryFromResult(res);
       flash(resultsBox,'flash-blue');
     }
 
@@ -2003,13 +2088,38 @@
           flash(advCard, 'flash-green');
           const normalizedId = String(id || '').trim();
           if (normalizedId) {
-            const delta = computeInstantColoringDelta(normalizedId);
+            const matchedResult = (lastResult && String(lastResult.id || '').trim() === normalizedId) ? lastResult : null;
+            const hadLocalNode = !!(localMap && Object.prototype.hasOwnProperty.call(localMap, normalizedId));
+            let delta = computeInstantColoringDelta(normalizedId);
+            if (!delta.coloredDelta && !delta.uncoloredDelta) {
+              if (matchedResult) {
+                const fallbackRows = deriveRowCountFromResult(matchedResult);
+                if (fallbackRows > 0) {
+                  delta = { coloredDelta: fallbackRows, uncoloredDelta: -fallbackRows };
+                }
+              } else if (!hadLocalNode) {
+                delta = { coloredDelta: 1, uncoloredDelta: -1 };
+              }
+            }
             if (delta.coloredDelta || delta.uncoloredDelta) {
               applyInstantCounterDelta(delta.coloredDelta, delta.uncoloredDelta);
             }
-            if (localMap && localMap[normalizedId]) {
-              localMap[normalizedId].aCol = true;
-              if (targetMode === 'both') localMap[normalizedId].dCol = true;
+            if (matchedResult) {
+              syncLocalEntryFromResult(matchedResult, {
+                allowCreateWhenMissing: true,
+                markAgent: true,
+                markAdmin: targetMode === 'both',
+                forceInAdmin: targetMode === 'both'
+              });
+            } else {
+              syncLocalEntryFromResult(null, {
+                id: normalizedId,
+                allowCreateWhenMissing: true,
+                fallbackRowsCount: 1,
+                markAgent: true,
+                markAdmin: targetMode === 'both',
+                forceInAdmin: targetMode === 'both'
+              });
             }
             markJustColored(normalizedId, targetMode);
             updateLastResultDuplicateState(normalizedId, targetMode);

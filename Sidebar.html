@@ -1252,17 +1252,32 @@
           if (!res || !res.ok) {
             throw new Error(res?.message || 'فشل التنفيذ');
           }
-          const newlyColored = Array.isArray(res.coloredIds) ? res.coloredIds : [];
-          newlyColored.forEach(id => coloredSet.add(id));
-          if (newlyColored.length) {
-            markJustColored(newlyColored, targetMode);
+          const newlyColoredRaw = Array.isArray(res.coloredIds) ? res.coloredIds : [];
+          const normalizedColored = [];
+          newlyColoredRaw.forEach(idVal => {
+            const key = String(idVal || '').trim();
+            if (!key) return;
+            normalizedColored.push(key);
+            coloredSet.add(key);
+          });
+          if (normalizedColored.length) {
+            const delta = computeInstantColoringDelta(normalizedColored);
+            if (delta.coloredDelta || delta.uncoloredDelta) {
+              applyInstantCounterDelta(delta.coloredDelta, delta.uncoloredDelta);
+            }
+            markJustColored(normalizedColored, targetMode);
             if (localMap) {
-              newlyColored.forEach(uid => {
-                const key = String(uid || '').trim();
-                if (!key || !localMap[key]) return;
+              normalizedColored.forEach(key => {
+                if (!localMap[key]) return;
                 localMap[key].aCol = true;
                 if (targetMode === 'both') localMap[key].dCol = true;
               });
+            }
+            if (lastResult) {
+              const lastIdNormalized = String(lastResult.id || '').trim();
+              if (lastIdNormalized && normalizedColored.includes(lastIdNormalized)) {
+                updateLastResultDuplicateState(lastIdNormalized, targetMode);
+              }
             }
           }
           copiedTotal += Number(res.copied || 0);
@@ -1291,6 +1306,7 @@
         if (copiedExternalTotal) parts.push(`خارجي ${copiedExternalTotal}`);
         if (skippedTotal) parts.push(`تخطي ${skippedTotal}`);
         if (bulkStatusText) bulkStatusText.textContent = parts.join(' • ');
+        refreshCountsLive();
       } catch (err) {
         if (bulkStatusText) bulkStatusText.textContent = `خطأ: ${err?.message || err}`;
         updateBulkProgress(processed, ids.length, 'توقف بسبب خطأ');
@@ -1486,9 +1502,11 @@
 
       if (personNote) personNote.textContent = 'جارٍ التلوين...';
       let done=0, fail=0;
+      const coloredSetNow = new Set();
       const runOne = (uid)=> new Promise((resolve)=>{
+        const normalized = String(uid || '').trim();
         google.script.run
-          .withSuccessHandler(_=>{ done++; resolve(true); })
+          .withSuccessHandler(_=>{ done++; if (normalized) coloredSetNow.add(normalized); resolve(true); })
           .withFailureHandler(_=>{ fail++; resolve(false); })
           .applyAdvancedAction(uid, sheet, adminColor.value, withdrawColor.value, targetMode, undefined, activeSectionKey || '');
       });
@@ -1496,14 +1514,27 @@
         if (isPersonFeatureDisabled()) { cancelPersonCardOperations(); return; }
         if(personNote) personNote.textContent = `تم — ملوّن: ${done}, فشل: ${fail}`;
         flash(personCardEl,'flash-green');
-        if(localMap){
-          lastProfileIds.forEach(uid=>{
-            if(!localMap[uid]) return;
-            localMap[uid].aCol = true;
-            if (targetMode==='both') localMap[uid].dCol = true;
-          });
+        const coloredIds = Array.from(coloredSetNow);
+        if (coloredIds.length) {
+          const delta = computeInstantColoringDelta(coloredIds);
+          if (delta.coloredDelta || delta.uncoloredDelta) {
+            applyInstantCounterDelta(delta.coloredDelta, delta.uncoloredDelta);
+          }
+          if(localMap){
+            coloredIds.forEach(uid=>{
+              if(!localMap[uid]) return;
+              localMap[uid].aCol = true;
+              if (targetMode==='both') localMap[uid].dCol = true;
+            });
+          }
+          markJustColored(coloredIds, targetMode);
+          if (lastResult) {
+            const lastIdNormalized = String(lastResult.id || '').trim();
+            if (coloredSetNow.has(lastIdNormalized)) {
+              updateLastResultDuplicateState(lastIdNormalized, targetMode);
+            }
+          }
         }
-        markJustColored(lastProfileIds, targetMode);
         refreshCountsLive();
       });
     }
@@ -1970,12 +2001,22 @@
         .withSuccessHandler(res => {
           advNote.textContent = res?.message || 'تم ✅';
           flash(advCard, 'flash-green');
-          if (localMap && localMap[id]) {
-            localMap[id].aCol = true;
-            if (targetMode === 'both') localMap[id].dCol = true;
+          const normalizedId = String(id || '').trim();
+          if (normalizedId) {
+            const delta = computeInstantColoringDelta(normalizedId);
+            if (delta.coloredDelta || delta.uncoloredDelta) {
+              applyInstantCounterDelta(delta.coloredDelta, delta.uncoloredDelta);
+            }
+            if (localMap && localMap[normalizedId]) {
+              localMap[normalizedId].aCol = true;
+              if (targetMode === 'both') localMap[normalizedId].dCol = true;
+            }
+            markJustColored(normalizedId, targetMode);
+            updateLastResultDuplicateState(normalizedId, targetMode);
+          } else {
+            markJustColored(id, targetMode);
+            if (lastResult) renderResult(lastResult);
           }
-          markJustColored(id, targetMode);
-          if (lastResult) renderResult(lastResult);
           refreshCountsLive();
         })
         .withFailureHandler(err => {
@@ -2014,6 +2055,71 @@
           if (menuQtUncolored) menuQtUncolored.textContent = '—';
         })
         .getLiveStatsForFooter(pct, activeSectionKey || '');
+    }
+    function parseCounterValue(el){
+      if (!el) return NaN;
+      const raw = String(el.textContent || '').replace(/[^0-9.-]/g, '');
+      if (!raw) return NaN;
+      const num = Number(raw);
+      return Number.isFinite(num) ? num : NaN;
+    }
+    function setCounterValue(el, value){
+      if (!el) return;
+      const safe = Math.max(0, Math.round(Number(value) || 0));
+      el.textContent = fmtNum(safe);
+    }
+    function applyInstantCounterDelta(coloredDelta, uncoloredDelta){
+      if (!coloredDelta && !uncoloredDelta) return;
+      const coloredEls = [qtColored, menuQtColored];
+      const uncoloredEls = [qtUncolored, menuQtUncolored];
+      coloredEls.forEach(el => {
+        const cur = parseCounterValue(el);
+        if (!Number.isFinite(cur)) return;
+        setCounterValue(el, cur + coloredDelta);
+      });
+      uncoloredEls.forEach(el => {
+        const cur = parseCounterValue(el);
+        if (!Number.isFinite(cur)) return;
+        setCounterValue(el, cur + uncoloredDelta);
+      });
+    }
+    function computeInstantColoringDelta(ids){
+      if (!localMap) return { coloredDelta: 0, uncoloredDelta: 0 };
+      const arr = Array.isArray(ids) ? ids : [ids];
+      let coloredDelta = 0;
+      let uncoloredDelta = 0;
+      arr.forEach(rawId => {
+        const key = String(rawId || '').trim();
+        if (!key) return;
+        const node = localMap[key];
+        if (!node) return;
+        const rowsCount = Number(node.rowsCount || (Array.isArray(node.rows) ? node.rows.length : 0) || 0);
+        if (!rowsCount) return;
+        if (!node.aCol) {
+          coloredDelta += rowsCount;
+          uncoloredDelta -= rowsCount;
+        }
+      });
+      return { coloredDelta, uncoloredDelta };
+    }
+    function updateLastResultDuplicateState(id, fallbackMode){
+      const normalized = String(id || '').trim();
+      if (!normalized || !lastResult) return;
+      if (String(lastResult.id || '').trim() !== normalized) return;
+      const node = localMap ? localMap[normalized] : null;
+      let hasAgent = !!(node && node.aCol);
+      let hasAdmin = !!(node && node.dCol);
+      if (!node && fallbackMode) {
+        if (fallbackMode === 'both') { hasAgent = true; hasAdmin = true; }
+        else if (fallbackMode === 'agent') { hasAgent = true; }
+      }
+      let dupLabel = null;
+      if (hasAgent && hasAdmin) dupLabel = 'مكرر';
+      else if (hasAgent) dupLabel = 'مكرر وكالة فقط';
+      else if (hasAdmin) dupLabel = 'مكرر ادارة فقط';
+      lastResult.isDuplicate = !!dupLabel;
+      lastResult.duplicateLabel = dupLabel || null;
+      renderResult(lastResult);
     }
     function applyModeLabel(){
       const isDark = document.body.classList.contains('dark');

@@ -884,6 +884,7 @@ function getSearchSnapshotLight(sectionKey) {
     const cache = CacheService.getScriptCache();
     const agentIndex   = cacheGetChunked_(qualifySectionCacheKey_(KEY_AGENT_INDEX, effectiveSectionKey),   cache) || {};
     const adminIdSet   = cacheGetChunked_(qualifySectionCacheKey_(KEY_ADMIN_IDSET, effectiveSectionKey),   cache) || {};
+    const adminRowMap  = cacheGetChunked_(qualifySectionCacheKey_(KEY_ADMIN_ROW_MAP, effectiveSectionKey), cache) || {};
     const coloredAgent = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_AGENT, effectiveSectionKey), cache) || {};
     const coloredAdmin = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_ADMIN, effectiveSectionKey), cache) || {};
 
@@ -893,12 +894,32 @@ function getSearchSnapshotLight(sectionKey) {
       const node = agentIndex[id] || {};
       const rowsLen = (node.rows && node.rows.length) ? node.rows.length : 0;
       agentRows += rowsLen;
+      const adminRows = adminRowMap[id];
+      const adminRowsCount = Array.isArray(adminRows) ? adminRows.length : 0;
       map[id] = {
         sum: Number(node.sum||0),
         salaries: (node.salaries||[]).map(Number),
         names: (node.names||[]).slice(), // نقل الأسماء
         rowsCount: rowsLen,
+        adminRowsCount: adminRowsCount,
         inAdmin: !!adminIdSet[id],
+        aCol: !!coloredAgent[id],
+        dCol: !!coloredAdmin[id]
+      };
+    }
+    const adminKeys = Object.keys(adminRowMap || {});
+    for (let i = 0; i < adminKeys.length; i++) {
+      const id = adminKeys[i];
+      if (map[id]) continue;
+      const rows = adminRowMap[id];
+      const adminRowsCount = Array.isArray(rows) ? rows.length : 0;
+      map[id] = {
+        sum: 0,
+        salaries: [],
+        names: [],
+        rowsCount: 0,
+        adminRowsCount: adminRowsCount,
+        inAdmin: adminRowsCount > 0,
         aCol: !!coloredAgent[id],
         dCol: !!coloredAdmin[id]
       };
@@ -922,15 +943,21 @@ function searchId(id, discountPercentage, sectionKey) {
     const cache = CacheService.getScriptCache();
     const agentIndex   = cacheGetChunked_(qualifySectionCacheKey_(KEY_AGENT_INDEX, effectiveSectionKey),   cache);
     const adminIdSet   = cacheGetChunked_(qualifySectionCacheKey_(KEY_ADMIN_IDSET, effectiveSectionKey),   cache);
+    const adminRowMap  = cacheGetChunked_(qualifySectionCacheKey_(KEY_ADMIN_ROW_MAP, effectiveSectionKey), cache);
     const coloredAgent = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_AGENT, effectiveSectionKey), cache);
     const coloredAdmin = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_ADMIN, effectiveSectionKey), cache);
 
-    if (!agentIndex || !adminIdSet || !coloredAgent || !coloredAdmin) {
+    if (!agentIndex || !adminIdSet || !adminRowMap || !coloredAgent || !coloredAdmin) {
       return { status:'error', message:'البيانات غير محمّلة. اضغط "تحميل البيانات".' };
     }
 
     const inAgent = !!agentIndex[id];
     const inAdmin = !!adminIdSet[id];
+    const adminRows = adminRowMap[id] || [];
+    const adminRowsCount = Array.isArray(adminRows) ? adminRows.length : 0;
+    const agentRowsCount = inAgent && agentIndex[id] && Array.isArray(agentIndex[id].rows)
+      ? agentIndex[id].rows.length
+      : 0;
 
     // ← مهم: نعرّف total من البداية ونستخدمه لاحقًا أينما كان الفرع
     let status   = 'غير موجود';
@@ -990,7 +1017,13 @@ function searchId(id, discountPercentage, sectionKey) {
       salaryAfterDiscount: aft.toFixed(2),
       id: id,
       isDuplicate: isDuplicate,
-      duplicateLabel: duplicateLabel
+      duplicateLabel: duplicateLabel,
+      inAgent: inAgent,
+      inAdmin: inAdmin,
+      rowsCount: agentRowsCount,
+      adminRowsCount: adminRowsCount,
+      coloredAgent: !!coloredAgent[id],
+      coloredAdmin: !!coloredAdmin[id]
     };
   } catch (e) {
     return { status:'error', message: e.toString() };
@@ -1775,14 +1808,17 @@ function classifyBulkId_(id, ctx, scope) {
   else if (extAgent) out.source = 'external-agent';
 
   let adminRows = ctx.adminRowMap[out.id] || [];
-  if (!adminRows.length && scope === 'all' && ctx.extAdminRowMap) {
+  let adminRowsCount = Array.isArray(adminRows) ? adminRows.length : 0;
+  if (!adminRowsCount && scope === 'all' && ctx.extAdminRowMap) {
     adminRows = ctx.extAdminRowMap[out.id] || [];
-    if (adminRows.length && out.source === 'none') out.source = 'external-admin';
-  } else if (adminRows.length && out.source === 'none') {
+    adminRowsCount = Array.isArray(adminRows) ? adminRows.length : 0;
+    if (adminRowsCount && out.source === 'none') out.source = 'external-admin';
+  } else if (adminRowsCount && out.source === 'none') {
     out.source = 'local-admin';
   }
 
-  out.inAdmin = adminRows.length > 0;
+  out.inAdmin = adminRowsCount > 0;
+  out.adminRowsCount = adminRowsCount;
 
   if (out.inAgent) {
     if (out.inAdmin) {
@@ -1908,6 +1944,7 @@ function bulkSearchExact(ids, discount, scope) {
         inAgent: !!info.inAgent,
         inAdmin: !!info.inAdmin,
         rowsCount: Number(info.rowsCount || 0),
+        adminRowsCount: Number(info.adminRowsCount || 0),
         names: info.names || [],
         source: info.source || 'none'
       });

@@ -939,18 +939,17 @@
       if (!res) return null;
       const key = String(res.id || '').trim();
       if (!key) return null;
-      let rows = Number(res.rowsCount || 0);
-      if (!rows && Array.isArray(res.salaries) && res.salaries.length) {
-        rows = res.salaries.length;
+      const node = (localMap && key && Object.prototype.hasOwnProperty.call(localMap, key)) ? localMap[key] : null;
+      const ctx = resolveDuplicateContext(res, node);
+      let totalRows = ctx.agentRows + ctx.adminRows;
+      if (!totalRows && (ctx.agentPresent || ctx.adminPresent)) {
+        totalRows = (ctx.agentPresent ? 1 : 0) + (ctx.adminPresent ? 1 : 0);
       }
-      if (!rows && res.state && res.state !== 'غير موجود') {
-        rows = 1;
-      }
-      let coloredRows = res.colored ? rows : 0;
-      if (res.colored && !coloredRows) {
-        coloredRows = 1;
-      }
-      const totalRows = rows || coloredRows;
+      let coloredRows = 0;
+      if (ctx.agentColored && ctx.agentRows) coloredRows += ctx.agentRows;
+      if (ctx.adminColored && ctx.adminRows) coloredRows += ctx.adminRows;
+      if (coloredRows > totalRows) coloredRows = totalRows;
+      if (!totalRows && coloredRows) totalRows = coloredRows;
       return { id: key, rows: Math.max(0, totalRows), coloredRows: Math.max(0, Math.min(totalRows, coloredRows)) };
     }
     function registerBulkDisplay(rows){
@@ -1304,16 +1303,21 @@
             coloredSet.add(key);
           });
           if (normalizedColored.length) {
-            const delta = computeInstantColoringDelta(normalizedColored);
+            const delta = computeInstantColoringDelta(normalizedColored, { mode: targetMode });
             if (delta.coloredDelta || delta.uncoloredDelta) {
               applyInstantCounterDelta(delta.coloredDelta, delta.uncoloredDelta);
             }
             markJustColored(normalizedColored, targetMode);
             if (localMap) {
               normalizedColored.forEach(key => {
-                if (!localMap[key]) return;
-                localMap[key].aCol = true;
-                if (targetMode === 'both') localMap[key].dCol = true;
+                const node = localMap[key];
+                if (!node) return;
+                node.aCol = true;
+                if (targetMode === 'both') {
+                  node.dCol = true;
+                  node.inAdmin = true;
+                  if (!node.adminRowsCount || node.adminRowsCount < 1) node.adminRowsCount = 1;
+                }
               });
             }
             if (lastResult) {
@@ -1331,9 +1335,17 @@
         }
 
         if (coloredSet.size) {
-          bulkResults = bulkResults.map(res => coloredSet.has(res.id)
-            ? Object.assign({}, res, { colored: true })
-            : res);
+          bulkResults = bulkResults.map(res => {
+            if (!coloredSet.has(res.id)) return res;
+            const next = Object.assign({}, res, {
+              colored: true,
+              coloredAgent: true
+            });
+            if (targetMode === 'both') {
+              next.coloredAdmin = true;
+            }
+            return next;
+          });
         }
         if (coloredSet.size) {
           markJustColored(Array.from(coloredSet), targetMode);
@@ -1559,15 +1571,20 @@
         flash(personCardEl,'flash-green');
         const coloredIds = Array.from(coloredSetNow);
         if (coloredIds.length) {
-          const delta = computeInstantColoringDelta(coloredIds);
+          const delta = computeInstantColoringDelta(coloredIds, { mode: targetMode });
           if (delta.coloredDelta || delta.uncoloredDelta) {
             applyInstantCounterDelta(delta.coloredDelta, delta.uncoloredDelta);
           }
           if(localMap){
             coloredIds.forEach(uid=>{
-              if(!localMap[uid]) return;
-              localMap[uid].aCol = true;
-              if (targetMode==='both') localMap[uid].dCol = true;
+              const node = localMap[uid];
+              if(!node) return;
+              node.aCol = true;
+              if (targetMode==='both') {
+                node.dCol = true;
+                node.inAdmin = true;
+                if (!node.adminRowsCount || node.adminRowsCount < 1) node.adminRowsCount = 1;
+              }
             });
           }
           markJustColored(coloredIds, targetMode);
@@ -1851,7 +1868,7 @@
       return localMap;
     }
     function createEmptyLocalNode(){
-      return { rowsCount: 0, sum: 0, salaries: [], names: [], inAdmin: false, aCol: false, dCol: false };
+      return { rowsCount: 0, adminRowsCount: 0, sum: 0, salaries: [], names: [], inAdmin: false, aCol: false, dCol: false };
     }
     function toNumericArray(list){
       if (!Array.isArray(list)) return [];
@@ -1873,6 +1890,50 @@
       if (status.includes('راتبين')) return 2;
       return 1;
     }
+    function pickBoolean(value, fallback){
+      return typeof value === 'boolean' ? value : !!fallback;
+    }
+    function resolveDuplicateContext(result, node, flavor){
+      const res = result || {};
+      const info = node || {};
+      const mode = String(flavor || '').toLowerCase();
+      const flavorAgent = mode === 'agent' || mode === 'both';
+      const flavorAdmin = mode === 'admin' || mode === 'both';
+
+      const derivedRows = deriveRowCountFromResult(res);
+      const explicitRows = Number(res.rowsCount || 0);
+      const nodeRows = Number(info.rowsCount || 0);
+      let agentRows = Math.max(0, derivedRows, explicitRows, nodeRows);
+
+      const adminRowsResult = Number(res.adminRowsCount || 0);
+      const adminRowsNode = Number(info.adminRowsCount || 0);
+      let adminRows = Math.max(0, adminRowsResult, adminRowsNode);
+
+      const statusText = String(res.status || '');
+      const agentPresent = !!(res.inAgent || agentRows > 0 || info.sum || (Array.isArray(info.names) && info.names.length) || flavorAgent || mode === 'both' || statusText.includes('وكال') || statusText.includes('راتب'));
+      const adminPresent = !!(res.inAdmin || adminRows > 0 || info.inAdmin || flavorAdmin || mode === 'both');
+
+      if (!agentRows && agentPresent) agentRows = 1;
+      if (!adminRows && adminPresent) adminRows = 1;
+
+      const agentColored = flavorAgent || pickBoolean(res.coloredAgent, pickBoolean(res.colored, info.aCol));
+      const adminColored = flavorAdmin || pickBoolean(res.coloredAdmin, info.dCol);
+
+      return { agentPresent, adminPresent, agentColored, adminColored, agentRows, adminRows };
+    }
+    function determineDuplicateLabelFromContext(ctx){
+      if (!ctx) return null;
+      const { agentPresent, adminPresent, agentColored, adminColored } = ctx;
+      if (agentPresent && adminPresent) {
+        if (agentColored && adminColored) return 'مكرر';
+        if (agentColored && !adminColored) return 'مكرر وكالة فقط';
+        if (!agentColored && adminColored) return 'مكرر ادارة فقط';
+        return 'مكرر';
+      }
+      if (agentColored) return 'مكرر وكالة فقط';
+      if (adminColored) return 'مكرر ادارة فقط';
+      return null;
+    }
     function computeSingleResultDisplayInfo(res){
       if (!res) return null;
       const key = String(res.id || '').trim();
@@ -1883,26 +1944,21 @@
       if (status === 'غير موجود' || status === 'error') {
         return { id: key, rows: 0, coloredRows: 0 };
       }
-      let totalRows = deriveRowCountFromResult(res);
       const node = (localMap && key && Object.prototype.hasOwnProperty.call(localMap, key)) ? localMap[key] : null;
-      if (node) {
-        const nodeRows = Number(node.rowsCount || 0);
-        if (nodeRows > totalRows) totalRows = nodeRows;
-        if (!totalRows && node.sum) totalRows = 1;
-      }
+      const ctx = resolveDuplicateContext(res, node);
+      let totalRows = ctx.agentRows + ctx.adminRows;
       if (!totalRows && status && status !== 'غير موجود' && status !== 'error' && !isAdminOnly) {
         totalRows = 1;
       }
+      if (!totalRows && (ctx.agentPresent || ctx.adminPresent)) {
+        totalRows = (ctx.agentPresent ? 1 : 0) + (ctx.adminPresent ? 1 : 0);
+      }
       let coloredRows = 0;
-      if (typeof res.colored === 'boolean') {
-        coloredRows = res.colored ? (totalRows || 1) : 0;
-      } else if (node) {
-        if (node.aCol || node.dCol) {
-          const base = totalRows || Number(node.rowsCount || 0) || 1;
-          coloredRows = base;
-        }
-      } else if (res.isDuplicate && res.duplicateLabel) {
-        coloredRows = totalRows || 1;
+      if (ctx.agentColored && ctx.agentRows) {
+        coloredRows += ctx.agentRows;
+      }
+      if (ctx.adminColored && ctx.adminRows) {
+        coloredRows += ctx.adminRows;
       }
       if (coloredRows > totalRows) coloredRows = totalRows;
       if (!totalRows && coloredRows) totalRows = coloredRows;
@@ -1953,10 +2009,20 @@
           const nm = String(result.name || '').trim();
           if (nm) node.names = [nm];
         }
+        const adminRowsFromResult = Math.max(0, Number(result.adminRowsCount || 0));
+        if (adminRowsFromResult && (!node.adminRowsCount || node.adminRowsCount < adminRowsFromResult)) {
+          node.adminRowsCount = adminRowsFromResult;
+        }
         if (typeof result.inAdmin === 'boolean') {
-          node.inAdmin = result.inAdmin;
+          node.inAdmin = result.inAdmin || node.inAdmin;
         } else if (status.includes('ادارة')) {
           node.inAdmin = true;
+        }
+        if (typeof result.coloredAgent === 'boolean' && result.coloredAgent) {
+          node.aCol = true;
+        }
+        if (typeof result.coloredAdmin === 'boolean' && result.coloredAdmin) {
+          node.dCol = true;
         }
         if (result.isDuplicate) {
           const label = String(result.duplicateLabel || '');
@@ -1966,9 +2032,24 @@
       } else if (options.fallbackRowsCount && (!node.rowsCount || node.rowsCount < options.fallbackRowsCount)) {
         node.rowsCount = options.fallbackRowsCount;
       }
-      if (options.forceInAdmin) node.inAdmin = true;
-      if (options.markAgent) node.aCol = true;
-      if (options.markAdmin) node.dCol = true;
+      if (options.forceInAdmin) {
+        node.inAdmin = true;
+        const fallbackAdmin = Math.max(1, Number(options.fallbackAdminRowsCount || options.fallbackRowsCount || 0));
+        if (!node.adminRowsCount || node.adminRowsCount < fallbackAdmin) {
+          node.adminRowsCount = fallbackAdmin;
+        }
+      }
+      if (options.markAgent) {
+        node.aCol = true;
+      }
+      if (options.markAdmin) {
+        node.dCol = true;
+        node.inAdmin = true;
+        const fallbackAdmin = Math.max(1, Number(options.fallbackAdminRowsCount || options.fallbackRowsCount || 0));
+        if (!node.adminRowsCount || node.adminRowsCount < fallbackAdmin) {
+          node.adminRowsCount = fallbackAdmin;
+        }
+      }
       return node;
     }
     function applyBadges(baseStatus, duplicateLabel, hasSalaries){
@@ -2020,32 +2101,29 @@
       }
 
       const baseStatus = res.status || '';
-      let dupLabel   = (res.isDuplicate && res.duplicateLabel) ? res.duplicateLabel : null;
-      if (idKey){
-        const node = (localMap && Object.prototype.hasOwnProperty.call(localMap, idKey)) ? localMap[idKey] : null;
-        if (!dupLabel && node){
-          if (node.aCol && node.dCol) dupLabel = 'مكرر';
-          else if (node.aCol)        dupLabel = 'مكرر وكالة فقط';
-          else if (node.dCol)        dupLabel = 'مكرر ادارة فقط';
-        }
-        if (!dupLabel && justColored[idKey]){
-          const flavor = justColored[idKey];
-          if (flavor === 'both') dupLabel = 'مكرر';
-          else if (flavor === 'admin') dupLabel = 'مكرر ادارة فقط';
-          else if (flavor === 'agent') dupLabel = 'مكرر وكالة فقط';
-        }
+      const node = (idKey && localMap && Object.prototype.hasOwnProperty.call(localMap, idKey)) ? localMap[idKey] : null;
+      const flavor = idKey && Object.prototype.hasOwnProperty.call(justColored, idKey) ? justColored[idKey] : null;
+      const ctx = resolveDuplicateContext(res, node, flavor);
+      let dupLabel = determineDuplicateLabelFromContext(ctx);
+      if (!dupLabel && res && res.isDuplicate && res.duplicateLabel) {
+        dupLabel = res.duplicateLabel;
       }
       if (idKey && Object.prototype.hasOwnProperty.call(justColored, idKey)){
         delete justColored[idKey];
         const idx = justColoredOrder.indexOf(idKey);
         if (idx >= 0) justColoredOrder.splice(idx, 1);
       }
-      if (dupLabel){
-        res.isDuplicate = true;
-        res.duplicateLabel = dupLabel;
-      } else {
-        res.isDuplicate = false;
-        res.duplicateLabel = null;
+      res.isDuplicate = !!dupLabel;
+      res.duplicateLabel = dupLabel || null;
+      res.inAgent = ctx.agentPresent;
+      res.inAdmin = ctx.adminPresent;
+      res.coloredAgent = ctx.agentColored;
+      res.coloredAdmin = ctx.adminColored;
+      if (ctx.agentRows && (!res.rowsCount || res.rowsCount < ctx.agentRows)) {
+        res.rowsCount = ctx.agentRows;
+      }
+      if (ctx.adminRows && (!res.adminRowsCount || res.adminRowsCount < ctx.adminRows)) {
+        res.adminRowsCount = ctx.adminRows;
       }
 
       const hasSalaries = Array.isArray(res.salaries) && res.salaries.length > 0;
@@ -2208,7 +2286,7 @@
           if (normalizedId) {
             const matchedResult = (lastResult && String(lastResult.id || '').trim() === normalizedId) ? lastResult : null;
             const hadLocalNode = !!(localMap && Object.prototype.hasOwnProperty.call(localMap, normalizedId));
-            let delta = computeInstantColoringDelta(normalizedId);
+            let delta = computeInstantColoringDelta(normalizedId, { mode: targetMode });
             if (!delta.coloredDelta && !delta.uncoloredDelta) {
               if (matchedResult) {
                 const fallbackRows = deriveRowCountFromResult(matchedResult);
@@ -2222,12 +2300,16 @@
             if (delta.coloredDelta || delta.uncoloredDelta) {
               applyInstantCounterDelta(delta.coloredDelta, delta.uncoloredDelta);
             }
+            const fallbackAdminRows = targetMode === 'both'
+              ? Math.max(1, Number(matchedResult?.adminRowsCount || 0) || 1)
+              : 0;
             if (matchedResult) {
               syncLocalEntryFromResult(matchedResult, {
                 allowCreateWhenMissing: true,
                 markAgent: true,
                 markAdmin: targetMode === 'both',
-                forceInAdmin: targetMode === 'both'
+                forceInAdmin: targetMode === 'both',
+                fallbackAdminRowsCount: fallbackAdminRows
               });
             } else {
               syncLocalEntryFromResult(null, {
@@ -2236,7 +2318,8 @@
                 fallbackRowsCount: 1,
                 markAgent: true,
                 markAdmin: targetMode === 'both',
-                forceInAdmin: targetMode === 'both'
+                forceInAdmin: targetMode === 'both',
+                fallbackAdminRowsCount: fallbackAdminRows
               });
             }
             markJustColored(normalizedId, targetMode);
@@ -2342,9 +2425,12 @@
         setCounterValue(el, cur + uncoloredDelta);
       });
     }
-    function computeInstantColoringDelta(ids){
+    function computeInstantColoringDelta(ids, options = {}){
       if (!localMap) return { coloredDelta: 0, uncoloredDelta: 0 };
       const arr = Array.isArray(ids) ? ids : [ids];
+      const mode = String(options.mode || 'both').toLowerCase();
+      const affectAgent = (mode === 'agent' || mode === 'both');
+      const affectAdmin = (mode === 'admin' || mode === 'both');
       let coloredDelta = 0;
       let uncoloredDelta = 0;
       arr.forEach(rawId => {
@@ -2352,11 +2438,19 @@
         if (!key) return;
         const node = localMap[key];
         if (!node) return;
-        const rowsCount = Number(node.rowsCount || (Array.isArray(node.rows) ? node.rows.length : 0) || 0);
-        if (!rowsCount) return;
-        if (!node.aCol) {
-          coloredDelta += rowsCount;
-          uncoloredDelta -= rowsCount;
+        const agentRows = Math.max(0, Number(node.rowsCount || (Array.isArray(node.rows) ? node.rows.length : 0) || 0));
+        const adminRows = Math.max(0, Number(node.adminRowsCount || 0));
+        if (affectAgent && !node.aCol) {
+          const count = agentRows || 1;
+          coloredDelta += count;
+          uncoloredDelta -= count;
+        }
+        if (affectAdmin) {
+          const adminCount = adminRows || (node.inAdmin ? 1 : 0);
+          if (adminCount && !node.dCol) {
+            coloredDelta += adminCount;
+            uncoloredDelta -= adminCount;
+          }
         }
       });
       return { coloredDelta, uncoloredDelta };
@@ -2366,19 +2460,20 @@
       if (!normalized || !lastResult) return;
       if (String(lastResult.id || '').trim() !== normalized) return;
       const node = localMap ? localMap[normalized] : null;
-      let hasAgent = !!(node && node.aCol);
-      let hasAdmin = !!(node && node.dCol);
-      if (!node && fallbackMode) {
-        if (fallbackMode === 'both') { hasAgent = true; hasAdmin = true; }
-        else if (fallbackMode === 'agent') { hasAgent = true; }
-        else if (fallbackMode === 'admin') { hasAdmin = true; }
-      }
-      let dupLabel = null;
-      if (hasAgent && hasAdmin) dupLabel = 'مكرر';
-      else if (hasAgent) dupLabel = 'مكرر وكالة فقط';
-      else if (hasAdmin) dupLabel = 'مكرر ادارة فقط';
+      const ctx = resolveDuplicateContext(lastResult, node, fallbackMode);
+      const dupLabel = determineDuplicateLabelFromContext(ctx);
       lastResult.isDuplicate = !!dupLabel;
       lastResult.duplicateLabel = dupLabel || null;
+      lastResult.inAgent = ctx.agentPresent;
+      lastResult.inAdmin = ctx.adminPresent;
+      lastResult.coloredAgent = ctx.agentColored;
+      lastResult.coloredAdmin = ctx.adminColored;
+      if (ctx.agentRows && (!lastResult.rowsCount || lastResult.rowsCount < ctx.agentRows)) {
+        lastResult.rowsCount = ctx.agentRows;
+      }
+      if (ctx.adminRows && (!lastResult.adminRowsCount || lastResult.adminRowsCount < ctx.adminRows)) {
+        lastResult.adminRowsCount = ctx.adminRows;
+      }
       renderResult(lastResult);
     }
     function applyModeLabel(){
@@ -2409,44 +2504,6 @@
     /******** البحث (محلي أولاً ثم السيرفر) ********/
     let querySeq = 0;
     function normalizeId(v){ return String(v||'').trim(); }
-
-    function buildLocalResult(id){
-      if (!localMap || (!localMap[id] && !Object.prototype.hasOwnProperty.call(localMap, id))) {
-        // لو غير موجود بالوكيل، يمكن يكون "ادارة فقط" — نترك للسيرفر الحكم
-        return { status:'غير موجود', totalSalary:'0.00', salaries:[], id:id, isDuplicate:false };
-      }
-      const node = localMap[id] || {};
-      const inAdmin = !!node.inAdmin;
-      const rowsCount = Number(node.rowsCount||0);
-      const total = Number(node.sum||0);
-      const salaries = Array.isArray(node.salaries) ? node.salaries.map(Number) : [];
-
-      let status = 'غير موجود';
-      if (rowsCount > 0) {
-        status = inAdmin ? ((rowsCount>1)? 'سحب وكالة - راتبين':'سحب وكالة') : ((rowsCount>1)? 'راتبين':'وكالة');
-      } else if (inAdmin) {
-        status = 'ادارة';
-      }
-
-      // مكرر؟
-      let isDuplicate=false, duplicateLabel=null;
-      const aCol = !!node.aCol;
-      const dCol = !!node.dCol;
-      if (aCol && dCol) { isDuplicate = true; duplicateLabel = 'مكرر'; }
-      else if (aCol)    { isDuplicate = true; duplicateLabel = 'مكرر وكالة فقط'; }
-      else if (dCol)    { isDuplicate = true; duplicateLabel = 'مكرر ادارة فقط'; }
-
-      return {
-        status: status,
-        totalSalary: total.toFixed(2),
-        salaries: salaries,
-        discountAmount: '0.00',
-        salaryAfterDiscount: total.toFixed(2),
-        id: id,
-        isDuplicate: isDuplicate,
-        duplicateLabel: duplicateLabel
-      };
-    }
 
   function doSearch(options = {}){
     const id = String(idInput.value||'').trim();
@@ -2481,6 +2538,7 @@
       let status;
       if (rowsCount > 0) status = inAdmin ? ((rowsCount>1)? 'سحب وكالة - راتبين':'سحب وكالة')
                                           : ((rowsCount>1)? 'راتبين':'وكالة');
+      else if (inAdmin) status = 'ادارة';
       else status = 'غير موجود';
 
       let isDuplicate=false, duplicateLabel=null;
@@ -2498,7 +2556,13 @@
         salaryAfterDiscount: total.toFixed(2),
         id,
         isDuplicate,
-        duplicateLabel
+        duplicateLabel,
+        inAgent: rowsCount > 0,
+        inAdmin: !!node.inAdmin,
+        rowsCount: rowsCount,
+        adminRowsCount: Number(node.adminRowsCount || 0),
+        coloredAgent: !!node.aCol,
+        coloredAdmin: !!node.dCol
       });
     }
 

@@ -428,6 +428,10 @@
     const multiText   = document.getElementById('multiText');
     const extraDupInfo= document.getElementById('extraDupInfo');
     const justColored = Object.create(null);
+    const justColoredOrder = [];
+    const LIVE_SOURCE_SINGLE = 'single';
+    const LIVE_SOURCE_BULK = 'bulk';
+    const liveDisplaySources = Object.create(null);
 
     const bulkCardEl         = document.getElementById('bulkCard');
     const bulkScope          = document.getElementById('bulkScope');
@@ -625,7 +629,6 @@
     let skipNextManualDebounce = false;
 
     const BULK_PAGE_SIZE = 20;
-    const JUST_COLORED_TTL = 120000;
     const SINGLE_DISCOUNT_STORAGE_KEY = 'SINGLE_DISCOUNT_PCT';
 
     const fmt = n => {
@@ -815,14 +818,21 @@
 
     function markJustColored(ids, mode){
       const arr = Array.isArray(ids) ? ids : [ids];
-      const flavor = mode === 'agent' ? 'agent' : 'both';
+      const flavor = mode === 'agent' ? 'agent' : (mode === 'admin' ? 'admin' : 'both');
       arr.forEach(id => {
         const key = String(id || '').trim();
         if (!key) return;
+        if (Object.prototype.hasOwnProperty.call(justColored, key)) {
+          const idx = justColoredOrder.indexOf(key);
+          if (idx >= 0) justColoredOrder.splice(idx, 1);
+        }
         justColored[key] = flavor;
-        setTimeout(() => {
-          if (justColored[key] === flavor) delete justColored[key];
-        }, JUST_COLORED_TTL);
+        justColoredOrder.push(key);
+        const overflow = justColoredOrder.length - 400;
+        if (overflow > 0) {
+          const removed = justColoredOrder.splice(0, overflow);
+          removed.forEach(k => { delete justColored[k]; });
+        }
       });
     }
 
@@ -886,6 +896,7 @@
       if (!bulkResults.length) {
         if (bulkEmptyState) bulkEmptyState.style.display = '';
         updateBulkPaginationUI(0, 0, 0, 0);
+        registerBulkDisplay([]);
         return;
       }
       if (bulkEmptyState) bulkEmptyState.style.display = 'none';
@@ -922,6 +933,38 @@
         if (bulkResultsBody) bulkResultsBody.appendChild(tr);
       });
       updateBulkPaginationUI(total, startIndex, endIndex, totalPages);
+      registerBulkDisplay(visible);
+    }
+    function computeBulkDisplayInfo(res){
+      if (!res) return null;
+      const key = String(res.id || '').trim();
+      if (!key) return null;
+      let rows = Number(res.rowsCount || 0);
+      if (!rows && Array.isArray(res.salaries) && res.salaries.length) {
+        rows = res.salaries.length;
+      }
+      if (!rows && res.state && res.state !== 'غير موجود') {
+        rows = 1;
+      }
+      let coloredRows = res.colored ? rows : 0;
+      if (res.colored && !coloredRows) {
+        coloredRows = 1;
+      }
+      const totalRows = rows || coloredRows;
+      return { id: key, rows: Math.max(0, totalRows), coloredRows: Math.max(0, Math.min(totalRows, coloredRows)) };
+    }
+    function registerBulkDisplay(rows){
+      clearLiveSource(LIVE_SOURCE_BULK, { skipRecalc: true });
+      if (Array.isArray(rows)) {
+        rows.forEach(res => {
+          const info = computeBulkDisplayInfo(res);
+          if (!info) return;
+          if (info.rows > 0) {
+            addLiveDisplayEntry(LIVE_SOURCE_BULK, info.id, info.rows, info.coloredRows, { skipRecalc: true });
+          }
+        });
+      }
+      recomputeLiveTotals();
     }
 
     function updateBulkCounters(){
@@ -1830,6 +1873,49 @@
       if (status.includes('راتبين')) return 2;
       return 1;
     }
+    function computeSingleResultDisplayInfo(res){
+      if (!res) return null;
+      const key = String(res.id || '').trim();
+      if (!key) return null;
+      const status = String(res.status || '');
+      const salaries = Array.isArray(res.salaries) ? res.salaries : [];
+      const isAdminOnly = status.includes('ادارة') && !salaries.length;
+      if (status === 'غير موجود' || status === 'error') {
+        return { id: key, rows: 0, coloredRows: 0 };
+      }
+      let totalRows = deriveRowCountFromResult(res);
+      const node = (localMap && key && Object.prototype.hasOwnProperty.call(localMap, key)) ? localMap[key] : null;
+      if (node) {
+        const nodeRows = Number(node.rowsCount || 0);
+        if (nodeRows > totalRows) totalRows = nodeRows;
+        if (!totalRows && node.sum) totalRows = 1;
+      }
+      if (!totalRows && status && status !== 'غير موجود' && status !== 'error' && !isAdminOnly) {
+        totalRows = 1;
+      }
+      let coloredRows = 0;
+      if (typeof res.colored === 'boolean') {
+        coloredRows = res.colored ? (totalRows || 1) : 0;
+      } else if (node) {
+        if (node.aCol || node.dCol) {
+          const base = totalRows || Number(node.rowsCount || 0) || 1;
+          coloredRows = base;
+        }
+      } else if (res.isDuplicate && res.duplicateLabel) {
+        coloredRows = totalRows || 1;
+      }
+      if (coloredRows > totalRows) coloredRows = totalRows;
+      if (!totalRows && coloredRows) totalRows = coloredRows;
+      return { id: key, rows: Math.max(0, totalRows), coloredRows: Math.max(0, coloredRows) };
+    }
+    function registerSingleResultDisplay(res){
+      clearLiveSource(LIVE_SOURCE_SINGLE, { skipRecalc: true });
+      const info = computeSingleResultDisplayInfo(res);
+      if (info && info.rows > 0) {
+        addLiveDisplayEntry(LIVE_SOURCE_SINGLE, info.id, info.rows, info.coloredRows, { skipRecalc: true });
+      }
+      recomputeLiveTotals();
+    }
     function syncLocalEntryFromResult(result, options = {}){
       const keySource = result ? result.id : options.id;
       const key = String(keySource || '').trim();
@@ -1897,9 +1983,10 @@
     }
     function renderResult(res){
       lastResult = res;
-      
+      const idKey = res && res.id ? String(res.id).trim() : '';
+
       // حدّد اسم الشخص إن وجد فى النتيجة (إما خاصية name أو دمج مصفوفة names)
-      (function(){ 
+      (function(){
         try{
           let nm = '';
           if (res) {
@@ -1917,6 +2004,7 @@
           discountInfo.textContent = '';
           discountInfo.style.display = 'none';
         }
+        registerSingleResultDisplay(res);
         return;
       }
       if (res.status === 'غير موجود'){
@@ -1927,11 +2015,38 @@
           discountInfo.textContent = '';
           discountInfo.style.display = 'none';
         }
+        registerSingleResultDisplay(res);
         return;
       }
 
       const baseStatus = res.status || '';
-      const dupLabel   = (res.isDuplicate && res.duplicateLabel) ? res.duplicateLabel : null;
+      let dupLabel   = (res.isDuplicate && res.duplicateLabel) ? res.duplicateLabel : null;
+      if (idKey){
+        const node = (localMap && Object.prototype.hasOwnProperty.call(localMap, idKey)) ? localMap[idKey] : null;
+        if (!dupLabel && node){
+          if (node.aCol && node.dCol) dupLabel = 'مكرر';
+          else if (node.aCol)        dupLabel = 'مكرر وكالة فقط';
+          else if (node.dCol)        dupLabel = 'مكرر ادارة فقط';
+        }
+        if (!dupLabel && justColored[idKey]){
+          const flavor = justColored[idKey];
+          if (flavor === 'both') dupLabel = 'مكرر';
+          else if (flavor === 'admin') dupLabel = 'مكرر ادارة فقط';
+          else if (flavor === 'agent') dupLabel = 'مكرر وكالة فقط';
+        }
+      }
+      if (idKey && Object.prototype.hasOwnProperty.call(justColored, idKey)){
+        delete justColored[idKey];
+        const idx = justColoredOrder.indexOf(idKey);
+        if (idx >= 0) justColoredOrder.splice(idx, 1);
+      }
+      if (dupLabel){
+        res.isDuplicate = true;
+        res.duplicateLabel = dupLabel;
+      } else {
+        res.isDuplicate = false;
+        res.duplicateLabel = null;
+      }
 
       const hasSalaries = Array.isArray(res.salaries) && res.salaries.length > 0;
       const isAdminOnly = baseStatus.includes('ادارة') && !hasSalaries;
@@ -1946,6 +2061,8 @@
           discountInfo.style.display = 'none';
         }
         flash(resultsBox,'flash-blue');
+        syncLocalEntryFromResult(res);
+        registerSingleResultDisplay(res);
         return;
       }
 
@@ -1971,6 +2088,7 @@
       } else multiText.textContent = '';
 
       syncLocalEntryFromResult(res);
+      registerSingleResultDisplay(res);
       flash(resultsBox,'flash-blue');
     }
 
@@ -2138,33 +2256,8 @@
 
     /******** عداد / وضع داكن / إخفاء تحميل ********/
     function fmtNum(n){ const x=Number(n); return isNaN(x)?'—':new Intl.NumberFormat('en-US').format(x); }
-    function refreshCountsLive(pctOverride){
-      const pct = (typeof pctOverride === 'number')
-        ? clampDiscountValue(pctOverride)
-        : getSingleDiscountPct();
-      google.script.run
-        .withSuccessHandler(res=>{
-          if(!res || !res.ok){
-            if (qtColored) qtColored.textContent = '—';
-            if (qtUncolored) qtUncolored.textContent = '—';
-            if (menuQtColored) menuQtColored.textContent = '—';
-            if (menuQtUncolored) menuQtUncolored.textContent = '—';
-            return;
-          }
-          const coloredVal = fmtNum(res.coloredRows || 0);
-          const uncoloredVal = fmtNum(res.uncoloredRows || 0);
-          if (qtColored) qtColored.textContent = coloredVal;
-          if (qtUncolored) qtUncolored.textContent = uncoloredVal;
-          if (menuQtColored) menuQtColored.textContent = coloredVal;
-          if (menuQtUncolored) menuQtUncolored.textContent = uncoloredVal;
-        })
-        .withFailureHandler(()=>{
-          if (qtColored) qtColored.textContent = '—';
-          if (qtUncolored) qtUncolored.textContent = '—';
-          if (menuQtColored) menuQtColored.textContent = '—';
-          if (menuQtUncolored) menuQtUncolored.textContent = '—';
-        })
-        .getLiveStatsForFooter(pct, activeSectionKey || '');
+    function refreshCountsLive(){
+      updateLiveCountersFromDisplay();
     }
     function parseCounterValue(el){
       if (!el) return NaN;
@@ -2177,6 +2270,62 @@
       if (!el) return;
       const safe = Math.max(0, Math.round(Number(value) || 0));
       el.textContent = fmtNum(safe);
+    }
+    function getLiveSourceMap(source){
+      const key = source || '__default';
+      if (!liveDisplaySources[key]) {
+        liveDisplaySources[key] = new Map();
+      }
+      return liveDisplaySources[key];
+    }
+    function clearLiveSource(source, options = {}){
+      const map = getLiveSourceMap(source);
+      map.clear();
+      if (!options.skipRecalc) recomputeLiveTotals();
+    }
+    function addLiveDisplayEntry(source, id, rows, coloredRows, options = {}){
+      const map = getLiveSourceMap(source);
+      const key = String(id || '').trim();
+      if (!key) return;
+      const totalRows = Math.max(0, Number(rows) || 0);
+      const colored = Math.max(0, Math.min(totalRows, Number(coloredRows) || 0));
+      if (!totalRows) {
+        map.delete(key);
+      } else {
+        const prev = map.get(key);
+        if (prev) {
+          map.set(key, {
+            rows: totalRows + Math.max(0, Number(prev.rows) || 0),
+            coloredRows: colored + Math.max(0, Number(prev.coloredRows) || 0),
+            count: (prev.count || 0) + 1
+          });
+        } else {
+          map.set(key, { rows: totalRows, coloredRows: colored, count: 1 });
+        }
+      }
+      if (!options.skipRecalc) recomputeLiveTotals();
+    }
+    function recomputeLiveTotals(){
+      let totalRows = 0;
+      let coloredRows = 0;
+      Object.keys(liveDisplaySources).forEach(src => {
+        const map = liveDisplaySources[src];
+        if (!map) return;
+        map.forEach(info => {
+          const rows = Math.max(0, Number(info?.rows) || 0);
+          const colored = Math.max(0, Math.min(rows, Number(info?.coloredRows) || 0));
+          totalRows += rows;
+          coloredRows += colored;
+        });
+      });
+      const uncoloredRows = Math.max(0, totalRows - coloredRows);
+      setCounterValue(qtColored, coloredRows);
+      setCounterValue(menuQtColored, coloredRows);
+      setCounterValue(qtUncolored, uncoloredRows);
+      setCounterValue(menuQtUncolored, uncoloredRows);
+    }
+    function updateLiveCountersFromDisplay(){
+      recomputeLiveTotals();
     }
     function applyInstantCounterDelta(coloredDelta, uncoloredDelta){
       if (!coloredDelta && !uncoloredDelta) return;
@@ -2222,6 +2371,7 @@
       if (!node && fallbackMode) {
         if (fallbackMode === 'both') { hasAgent = true; hasAdmin = true; }
         else if (fallbackMode === 'agent') { hasAgent = true; }
+        else if (fallbackMode === 'admin') { hasAdmin = true; }
       }
       let dupLabel = null;
       if (hasAgent && hasAdmin) dupLabel = 'مكرر';
@@ -2312,6 +2462,7 @@
       personNote.textContent = '—';
       personMsg.value = '';
       clearDupUI();
+      clearLiveSource(LIVE_SOURCE_SINGLE);
       return;
     }
 
@@ -2830,55 +2981,5 @@
 <?!= HtmlService.createHtmlOutputFromFile('AIClient').getContent(); ?>
 <!-- ✅ ترتيب موحّد + تثبيت الأدوات السريعة + تنسيق صف البحث -->
  
-<script>
-(function(){
-  if (typeof renderResult !== 'function') return;
-  const _orig = renderResult;
-
-  renderResult = function(res){
-    // ارسم النتيجة الأصلية أولاً (الراتب/الحالة…)
-    _orig(res);
-
-    // ثم عزّز "مكرر" محليًا فورًا
-    try{
-      const dupBadge = document.getElementById('dupBadge'); // شارة "مكرر" الحالية
-      const id = (res && res.id) ? String(res.id).trim() : '';
-
-      // لو السيرفر لسه ما رجّع "مكرر"، بس نحنا شايفين تنفيذ فوري لهالـID
-      const serverSaysDup = !!(res && (res.isDuplicate || res.dupFlavor));
-      if (id && justColored[id] && !serverSaysDup) {
-        if (dupBadge){
-          dupBadge.style.display = '';
-          dupBadge.textContent = (justColored[id] === 'both') ? 'مكرر' : 'مكرر وكالة فقط';
-        }
-        // (اختياري) امسح العلامة بعد أول إظهار لحتى ما تضل معك
-        // delete justColored[id];
-      } else if (dupBadge && !serverSaysDup) {
-        // ما في لا محلي ولا سيرفر → أخفِ الشارة
-        dupBadge.style.display = 'none';
-      }
-    }catch(_){}
-  };
-
-  // نظافة بصرية: لما تغيّر الـID أو يبدأ بحث جديد امسح الشارة بسرعة
-  try {
-    const idInput = document.getElementById('idInput');
-    if (idInput){
-      idInput.addEventListener('input', ()=>{
-        const dupBadge = document.getElementById('dupBadge');
-        if (dupBadge) dupBadge.style.display = 'none';
-      });
-    }
-    if (typeof renderLoading === 'function'){
-      const _rl = renderLoading;
-      renderLoading = function(){
-        _rl();
-        const dupBadge = document.getElementById('dupBadge');
-        if (dupBadge) dupBadge.style.display = 'none';
-      };
-    }
-  } catch (_){}
-})();
-</script>
 </body>
 </html>

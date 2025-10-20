@@ -230,8 +230,8 @@ function switchActiveSection(sectionKey) {
       userProps.setProperty(PROP_ACTIVE_SECTION, entry.key);
     }
 
-    const loadResult = loadDataIntoCache();
-    const snapshot = getSearchSnapshotLight();
+    const loadResult = loadDataIntoCache(entry.key);
+    const snapshot = getSearchSnapshotLight(entry.key);
     return {
       ok: true,
       section: { key: entry.key, label: entry.label },
@@ -771,19 +771,19 @@ function buildInfoGroups_(rows1, rows2){
 /*****************************
  * تحميل البيانات إلى الكاش
  *****************************/
-function loadDataIntoCache() {
+function loadDataIntoCache(sectionKey) {
   try {
     const cache = CacheService.getScriptCache();
-    const cfg = getConfig_();
-    const sectionKey = getEffectiveSectionKey_(cfg) || 'default';
-    const agentIndexKey    = qualifySectionCacheKey_(KEY_AGENT_INDEX, sectionKey);
-    const adminIdSetKey    = qualifySectionCacheKey_(KEY_ADMIN_IDSET, sectionKey);
-    const adminRowMapKey   = qualifySectionCacheKey_(KEY_ADMIN_ROW_MAP, sectionKey);
-    const coloredAgentKey  = qualifySectionCacheKey_(KEY_COLORED_AGENT, sectionKey);
-    const coloredAdminKey  = qualifySectionCacheKey_(KEY_COLORED_ADMIN, sectionKey);
-    const corrMapKey       = qualifySectionCacheKey_(KEY_CORR_MAP, sectionKey);
-    const infoId2GroupKey  = qualifySectionCacheKey_(KEY_INFO_ID2GROUP, sectionKey);
-    const infoGroupsKey    = qualifySectionCacheKey_(KEY_INFO_GROUPS, sectionKey);
+    const cfg = getConfig_({ sectionKey });
+    const effectiveSectionKey = getEffectiveSectionKey_(cfg) || 'default';
+    const agentIndexKey    = qualifySectionCacheKey_(KEY_AGENT_INDEX, effectiveSectionKey);
+    const adminIdSetKey    = qualifySectionCacheKey_(KEY_ADMIN_IDSET, effectiveSectionKey);
+    const adminRowMapKey   = qualifySectionCacheKey_(KEY_ADMIN_ROW_MAP, effectiveSectionKey);
+    const coloredAgentKey  = qualifySectionCacheKey_(KEY_COLORED_AGENT, effectiveSectionKey);
+    const coloredAdminKey  = qualifySectionCacheKey_(KEY_COLORED_ADMIN, effectiveSectionKey);
+    const corrMapKey       = qualifySectionCacheKey_(KEY_CORR_MAP, effectiveSectionKey);
+    const infoId2GroupKey  = qualifySectionCacheKey_(KEY_INFO_ID2GROUP, effectiveSectionKey);
+    const infoGroupsKey    = qualifySectionCacheKey_(KEY_INFO_GROUPS, effectiveSectionKey);
     const sectionLabel = cfg.sectionLabel || 'القسم الحالي';
 
     // الوكيل
@@ -877,15 +877,15 @@ function loadDataIntoCache() {
 /*****************************
  * سنابشوت محلي سريع للواجهة
  *****************************/
-function getSearchSnapshotLight() {
+function getSearchSnapshotLight(sectionKey) {
   try {
-    const cfg = getConfig_();
-    const sectionKey = getEffectiveSectionKey_(cfg) || 'default';
+    const cfg = getConfig_({ sectionKey });
+    const effectiveSectionKey = getEffectiveSectionKey_(cfg) || 'default';
     const cache = CacheService.getScriptCache();
-    const agentIndex   = cacheGetChunked_(qualifySectionCacheKey_(KEY_AGENT_INDEX, sectionKey),   cache) || {};
-    const adminIdSet   = cacheGetChunked_(qualifySectionCacheKey_(KEY_ADMIN_IDSET, sectionKey),   cache) || {};
-    const coloredAgent = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_AGENT, sectionKey), cache) || {};
-    const coloredAdmin = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_ADMIN, sectionKey), cache) || {};
+    const agentIndex   = cacheGetChunked_(qualifySectionCacheKey_(KEY_AGENT_INDEX, effectiveSectionKey),   cache) || {};
+    const adminIdSet   = cacheGetChunked_(qualifySectionCacheKey_(KEY_ADMIN_IDSET, effectiveSectionKey),   cache) || {};
+    const coloredAgent = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_AGENT, effectiveSectionKey), cache) || {};
+    const coloredAdmin = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_ADMIN, effectiveSectionKey), cache) || {};
 
     const map = {};
     let agentRows = 0;
@@ -912,18 +912,18 @@ function getSearchSnapshotLight() {
 /*****************************
  * بحث سريع + ملخص
  *****************************/
-function searchId(id, discountPercentage) {
+function searchId(id, discountPercentage, sectionKey) {
   try {
     if (!id) return { status:'error', message:'الرجاء إدخال ID للبحث.' };
     id = String(id).trim();
 
-    const cfg = getConfig_();
-    const sectionKey = getEffectiveSectionKey_(cfg) || 'default';
+    const cfg = getConfig_({ sectionKey });
+    const effectiveSectionKey = getEffectiveSectionKey_(cfg) || 'default';
     const cache = CacheService.getScriptCache();
-    const agentIndex   = cacheGetChunked_(qualifySectionCacheKey_(KEY_AGENT_INDEX, sectionKey),   cache);
-    const adminIdSet   = cacheGetChunked_(qualifySectionCacheKey_(KEY_ADMIN_IDSET, sectionKey),   cache);
-    const coloredAgent = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_AGENT, sectionKey), cache);
-    const coloredAdmin = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_ADMIN, sectionKey), cache);
+    const agentIndex   = cacheGetChunked_(qualifySectionCacheKey_(KEY_AGENT_INDEX, effectiveSectionKey),   cache);
+    const adminIdSet   = cacheGetChunked_(qualifySectionCacheKey_(KEY_ADMIN_IDSET, effectiveSectionKey),   cache);
+    const coloredAgent = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_AGENT, effectiveSectionKey), cache);
+    const coloredAdmin = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_ADMIN, effectiveSectionKey), cache);
 
     if (!agentIndex || !adminIdSet || !coloredAgent || !coloredAdmin) {
       return { status:'error', message:'البيانات غير محمّلة. اضغط "تحميل البيانات".' };
@@ -997,13 +997,13 @@ function searchId(id, discountPercentage) {
   }
 }
 
-function getLiveStatsForFooter(discountPercentage) {
+function getLiveStatsForFooter(discountPercentage, sectionKey) {
   try {
-    const cfg = getConfig_();
-    const sectionKey = getEffectiveSectionKey_(cfg) || 'default';
+    const cfg = getConfig_({ sectionKey });
+    const effectiveSectionKey = getEffectiveSectionKey_(cfg) || 'default';
     const cache = CacheService.getScriptCache();
-    const agentIndex   = cacheGetChunked_(qualifySectionCacheKey_(KEY_AGENT_INDEX, sectionKey),   cache) || {};
-    const coloredAgent = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_AGENT, sectionKey), cache) || {};
+    const agentIndex   = cacheGetChunked_(qualifySectionCacheKey_(KEY_AGENT_INDEX, effectiveSectionKey),   cache) || {};
+    const coloredAgent = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_AGENT, effectiveSectionKey), cache) || {};
 
     let totalRowsWithIds = 0;
     let coloredRows = 0;
@@ -1077,20 +1077,20 @@ function buildPersonCardFromGroup_(group, agentIndex, corrMap) {
   };
 }
 
-function getPersonCardById(id) {
+function getPersonCardById(id, sectionKey) {
   try{
     id = String(id||'').trim();
     if (!id) return { ok:false, message:'أدخل ID' };
 
-    const cfg = getConfig_();
-    const sectionKey = getEffectiveSectionKey_(cfg) || 'default';
+    const cfg = getConfig_({ sectionKey });
+    const effectiveSectionKey = getEffectiveSectionKey_(cfg) || 'default';
     const cache = CacheService.getScriptCache();
-    const id2group   = cacheGetChunked_(qualifySectionCacheKey_(KEY_INFO_ID2GROUP, sectionKey), cache) || {};
-    const groups     = cacheGetChunked_(qualifySectionCacheKey_(KEY_INFO_GROUPS, sectionKey),   cache) || {};
-    const agentIndex = cacheGetChunked_(qualifySectionCacheKey_(KEY_AGENT_INDEX, sectionKey),   cache) || {};
-    const corrMap    = cacheGetChunked_(qualifySectionCacheKey_(KEY_CORR_MAP, sectionKey),      cache) || {};
-    const coloredAgent = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_AGENT, sectionKey), cache) || {};
-    const coloredAdmin = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_ADMIN, sectionKey), cache) || {};
+    const id2group   = cacheGetChunked_(qualifySectionCacheKey_(KEY_INFO_ID2GROUP, effectiveSectionKey), cache) || {};
+    const groups     = cacheGetChunked_(qualifySectionCacheKey_(KEY_INFO_GROUPS, effectiveSectionKey),   cache) || {};
+    const agentIndex = cacheGetChunked_(qualifySectionCacheKey_(KEY_AGENT_INDEX, effectiveSectionKey),   cache) || {};
+    const corrMap    = cacheGetChunked_(qualifySectionCacheKey_(KEY_CORR_MAP, effectiveSectionKey),      cache) || {};
+    const coloredAgent = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_AGENT, effectiveSectionKey), cache) || {};
+    const coloredAdmin = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_ADMIN, effectiveSectionKey), cache) || {};
 
     if (!id2group || !groups || !agentIndex) {
       return { ok:false, message:'⚠️ البيانات غير محمّلة. اضغط "تحميل البيانات".' };
@@ -1168,22 +1168,22 @@ function colorRowsFast_(sh, rows, bg) {
 /*****************************
  * تنفيذ ذكي + نسخ/تلوين (مع منع تكرار مُحكم)
  *****************************/
-function applyAdvancedAction(id, targetSheet, adminColor, withdrawColor, targetMode, expandAllProfileIds) {
+function applyAdvancedAction(id, targetSheet, adminColor, withdrawColor, targetMode, expandAllProfileIds, sectionKey) {
   try {
     id = String(id||'').trim();
     if(!id) return {success:false,message:"❌ أدخل ID"};
 
-    targetMode = (targetMode||'both').toLowerCase(); 
+    targetMode = (targetMode||'both').toLowerCase();
     const doAdminOps = (targetMode === 'both');     // "الإدارة + الوكيل"
     expandAllProfileIds = (expandAllProfileIds !== false); // افتراضي: يوسّع
 
-    const cfg = getConfig_();
-    const sectionKey = getEffectiveSectionKey_(cfg) || 'default';
+    const cfg = getConfig_({ sectionKey });
+    const effectiveSectionKey = getEffectiveSectionKey_(cfg) || 'default';
     const cache = CacheService.getScriptCache();
-    const agentIndex  = cacheGetChunked_(qualifySectionCacheKey_(KEY_AGENT_INDEX, sectionKey),   cache) || {};
-    const adminRowMap = cacheGetChunked_(qualifySectionCacheKey_(KEY_ADMIN_ROW_MAP, sectionKey), cache) || {};
-    let coloredAgent  = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_AGENT, sectionKey), cache) || {};
-    let coloredAdmin  = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_ADMIN, sectionKey), cache) || {};
+    const agentIndex  = cacheGetChunked_(qualifySectionCacheKey_(KEY_AGENT_INDEX, effectiveSectionKey),   cache) || {};
+    const adminRowMap = cacheGetChunked_(qualifySectionCacheKey_(KEY_ADMIN_ROW_MAP, effectiveSectionKey), cache) || {};
+    let coloredAgent  = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_AGENT, effectiveSectionKey), cache) || {};
+    let coloredAdmin  = cacheGetChunked_(qualifySectionCacheKey_(KEY_COLORED_ADMIN, effectiveSectionKey), cache) || {};
 
     const adSS = SpreadsheetApp.openById(cfg.ADMIN_SHEET_ID);
     const adSh = adSS.getSheetByName(cfg.ADMIN_SHEET_NAME);
